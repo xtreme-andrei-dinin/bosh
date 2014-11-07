@@ -1,4 +1,4 @@
-require 'logger'
+require 'mono_logger'
 require 'bosh/core/shell'
 require 'bosh/dev/build'
 require 'bosh/dev/download_adapter'
@@ -25,7 +25,7 @@ module Bosh::Dev
         args.fetch(:candidate_sha),
         args.fetch(:feature_branch),
         args.fetch(:stable_branch),
-        Logger.new(STDERR),
+        MonoLogger.new(STDERR),
       )
     end
 
@@ -117,7 +117,9 @@ module Bosh::Dev
         candidate_build_number = stage_args.fetch(:candidate_build_number)
         feature_branch = stage_args.fetch(:feature_branch)
 
+        final_release_sha = @tagger.stable_tag_sha(candidate_build_number)
         @merger.merge(
+          final_release_sha,
           feature_branch,
           "Merge final release for build #{candidate_build_number} to #{feature_branch}",
         )
@@ -128,8 +130,7 @@ module Bosh::Dev
         candidate_build_number = stage_args.fetch(:candidate_build_number)
         feature_branch = stage_args.fetch(:feature_branch)
 
-        stable_tag_name = @tagger.stable_tag_name(candidate_build_number)
-        final_release_sha = @tagger.tag_sha(stable_tag_name)
+        final_release_sha = @tagger.stable_tag_sha(candidate_build_number)
         @merger.branch_contains?(feature_branch, final_release_sha)
       end
     end

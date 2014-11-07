@@ -1,10 +1,9 @@
 require 'spec_helper'
-require 'logger'
 require 'bosh/dev/git_tagger'
 
 module Bosh::Dev
   describe GitTagger do
-    subject(:git_tagger) { described_class.new(Logger.new(nil)) }
+    subject(:git_tagger) { described_class.new(logger) }
 
     describe '#tag_and_push' do
       let(:sha)            { 'fake-sha' }
@@ -114,7 +113,11 @@ module Bosh::Dev
       let(:tag_sha) { 'fake-tag-sha' }
 
       it 'returns the sha when there is a tag with the given name' do
-        expect(Open3).to receive(:capture3).with("git rev-parse #{tag_name}").and_return(
+        expect(Open3).to receive(:capture3).with('git fetch --tags').and_return(
+          [ '', nil, instance_double('Process::Status', success?: true) ]
+        )
+
+        expect(Open3).to receive(:capture3).with("git rev-parse #{tag_name}^{}").and_return(
           [ tag_sha, nil, instance_double('Process::Status', success?: true) ]
         )
 
@@ -122,7 +125,11 @@ module Bosh::Dev
       end
 
       it 'errors when there is not a tag with the given name' do
-        expect(Open3).to receive(:capture3).with("git rev-parse #{tag_name}").and_return(
+        expect(Open3).to receive(:capture3).with('git fetch --tags').and_return(
+          [ '', nil, instance_double('Process::Status', success?: true) ]
+        )
+
+        expect(Open3).to receive(:capture3).with("git rev-parse #{tag_name}^{}").and_return(
           [ 'fake-error', nil, instance_double('Process::Status', success?: false) ]
         )
 

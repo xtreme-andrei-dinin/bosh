@@ -7,65 +7,79 @@ module Bosh::Dev
   describe Build do
     include FakeFS::SpecHelpers
 
-    let(:logger) { Logger.new('/dev/null') }
-    let(:bucket_name) { 'fake-bucket' }
-
     describe '.candidate' do
-      subject { described_class.candidate(bucket_name, logger) }
+      subject { described_class.candidate(logger) }
 
       context 'when CANDIDATE_BUILD_NUMBER is set' do
         before { stub_const('ENV', 'CANDIDATE_BUILD_NUMBER' => 'candidate') }
 
         it { should be_a(Build::Candidate) }
         its(:number) { should eq('candidate') }
-        its(:bucket) { should eq('fake-bucket') }
 
         it 'uses DownloadAdapater as download adapter' do
           download_adapter = instance_double('Bosh::Dev::DownloadAdapter')
-          expect(Bosh::Dev::DownloadAdapter)
-            .to receive(:new)
+          Bosh::Dev::DownloadAdapter
+            .should_receive(:new)
             .with(logger)
             .and_return(download_adapter)
 
           build = instance_double('Bosh::Dev::Build::Local')
-          expect(Bosh::Dev::Build::Candidate)
-            .to receive(:new)
-            .with('candidate', 'fake-bucket', download_adapter, logger)
+          Bosh::Dev::Build::Candidate
+            .should_receive(:new)
+            .with('candidate', download_adapter, logger)
             .and_return(build)
 
-          expect(subject).to eq(build)
+          subject.should == build
         end
       end
 
       context 'when CANDIDATE_BUILD_NUMBER is not set' do
         it { should be_a(Build::Local) }
         its(:number) { should eq('0000') }
-        its(:bucket) { should eq('fake-bucket') }
 
         it 'uses LocalDownloadAdapater as download adapter' do
           download_adapter = instance_double('Bosh::Dev::LocalDownloadAdapter')
-          expect(Bosh::Dev::LocalDownloadAdapter)
-            .to receive(:new)
+          Bosh::Dev::LocalDownloadAdapter
+            .should_receive(:new)
             .with(logger)
             .and_return(download_adapter)
 
           build = instance_double('Bosh::Dev::Build::Local')
-          expect(Bosh::Dev::Build::Local)
-            .to receive(:new)
-            .with('0000', 'fake-bucket', download_adapter, logger)
+          Bosh::Dev::Build::Local
+            .should_receive(:new)
+            .with('0000', download_adapter, logger)
             .and_return(build)
 
-          expect(subject).to eq(build)
+          subject.should == build
         end
       end
     end
 
     let(:access_key_id) { 'FAKE_ACCESS_KEY_ID' }
     let(:secret_access_key) { 'FAKE_SECRET_ACCESS_KEY' }
+    let(:fog_storage) do
+      Fog::Storage.new(
+        provider: 'AWS',
+        aws_access_key_id: access_key_id,
+        aws_secret_access_key: secret_access_key,
+      )
+    end
 
-    subject(:build) { Build::Candidate.new('123', bucket_name, download_adapter, logger) }
+    subject(:build) { Build::Candidate.new('123', download_adapter, logger) }
     let(:download_adapter) { instance_double('Bosh::Dev::DownloadAdapter') }
-    let(:bucket_name) { 'fake-bucket' }
+
+    before(:all) { Fog.mock! }
+    after(:all) { Fog.unmock! }
+
+    before do
+      Fog::Mock.reset
+      fog_storage.directories.create(key: 'bosh-ci-pipeline')
+      fog_storage.directories.create(key: 'bosh-jenkins-artifacts')
+      stub_const('ENV', {
+        'AWS_SECRET_ACCESS_KEY_FOR_STEMCELLS_JENKINS_ACCOUNT' => secret_access_key,
+        'AWS_ACCESS_KEY_ID_FOR_STEMCELLS_JENKINS_ACCOUNT' => access_key_id
+      })
+    end
 
     describe '#upload_release' do
       let(:release) do
@@ -75,14 +89,14 @@ module Bosh::Dev
         )
       end
 
-      before { allow(Bosh::Dev::UploadAdapter).to receive(:new).and_return(upload_adapter) }
+      before { Bosh::Dev::UploadAdapter.stub(:new).and_return(upload_adapter) }
       let(:upload_adapter) { instance_double('Bosh::Dev::UploadAdapter', upload: nil) }
 
       it 'uploads the release with its build number' do
         io = double('io')
-        allow(File).to receive(:open).with('fake-release-tarball-path') { io }
-        expect(upload_adapter).to receive(:upload).with(
-          bucket_name: bucket_name,
+        File.stub(:open).with('fake-release-tarball-path') { io }
+        upload_adapter.should_receive(:upload).with(
+          bucket_name: 'bosh-ci-pipeline',
           key: '123/release/bosh-123.tgz',
           body: io,
           public: true,
@@ -102,7 +116,7 @@ module Bosh::Dev
       let(:dst) { 'dest_dir' }
       let(:files) { %w(foo/bar.txt foo/bar/baz.txt) }
 
-      before { allow(Bosh::Dev::UploadAdapter).to receive(:new).and_return(upload_adapter) }
+      before { Bosh::Dev::UploadAdapter.stub(:new).and_return(upload_adapter) }
       let(:upload_adapter) { instance_double('Bosh::Dev::UploadAdapter') }
 
       before do
@@ -116,13 +130,11 @@ module Bosh::Dev
       end
 
       it 'recursively uploads a directory into base_dir' do
-        expect(upload_adapter).to receive(:upload) do |options|
-          bucket = options.fetch(:bucket_name)
+        upload_adapter.should_receive(:upload) do |options|
           key = options.fetch(:key)
           body = options.fetch(:body)
           public = options.fetch(:public)
 
-          expect(bucket).to be(bucket_name)
           expect(public).to be(true)
 
           case key
@@ -217,13 +229,13 @@ module Bosh::Dev
     end
 
     describe '#upload_stemcell' do
-      let(:logger) { instance_double('Logger').as_null_object }
+      let(:bucket_files) { fog_storage.directories.get('bosh-ci-pipeline').files }
       let(:upload_adapter) { instance_double('Bosh::Dev::UploadAdapter', upload: nil) }
 
       before do
         FileUtils.mkdir('/tmp')
         File.open(stemcell.path, 'w') { |f| f.write(stemcell_contents) }
-        allow(Bosh::Dev::UploadAdapter).to receive(:new).and_return(upload_adapter)
+        Bosh::Dev::UploadAdapter.stub(:new).and_return(upload_adapter)
       end
 
       describe 'when publishing a full stemcell' do
@@ -242,19 +254,20 @@ module Bosh::Dev
           key = '123/bosh-stemcell/vsphere/bosh-stemcell-123-vsphere-esxi-ubuntu.tgz'
           latest_key = '123/bosh-stemcell/vsphere/bosh-stemcell-latest-vsphere-esxi-ubuntu.tgz'
 
-          expect(logger).to receive(:info).with("uploaded to s3://#{bucket_name}/#{key}")
 
-          expect(upload_adapter).to receive(:upload).with(bucket_name: bucket_name,
+          upload_adapter.should_receive(:upload).with(bucket_name: 'bosh-ci-pipeline',
                                                       key: key,
                                                       body: anything,
                                                       public: true)
 
-          expect(upload_adapter).to receive(:upload).with(bucket_name: bucket_name,
+          upload_adapter.should_receive(:upload).with(bucket_name: 'bosh-ci-pipeline',
                                                       key: latest_key,
                                                       body: anything,
                                                       public: true)
 
           build.upload_stemcell(stemcell)
+
+          expect(log_string).to include("uploaded to s3://bosh-ci-pipeline/#{key}")
         end
       end
 
@@ -275,19 +288,20 @@ module Bosh::Dev
           key = '123/bosh-stemcell/vsphere/light-bosh-stemcell-123-vsphere-esxi-ubuntu.tgz'
           latest_key = '123/bosh-stemcell/vsphere/light-bosh-stemcell-latest-vsphere-esxi-ubuntu.tgz'
 
-          expect(logger).to receive(:info).with("uploaded to s3://#{bucket_name}/#{key}")
 
-          expect(upload_adapter).to receive(:upload).with(bucket_name: bucket_name,
+          upload_adapter.should_receive(:upload).with(bucket_name: 'bosh-ci-pipeline',
                                                       key: key,
                                                       body: anything,
                                                       public: true)
 
-          expect(upload_adapter).to receive(:upload).with(bucket_name: bucket_name,
+          upload_adapter.should_receive(:upload).with(bucket_name: 'bosh-ci-pipeline',
                                                       key: latest_key,
                                                       body: anything,
                                                       public: true)
 
           build.upload_stemcell(stemcell)
+
+          expect(log_string).to include("uploaded to s3://bosh-ci-pipeline/#{key}")
         end
       end
     end
@@ -311,15 +325,15 @@ module Bosh::Dev
 
       it 'downloads the specified stemcell version from the pipeline bucket' do
         expected_uri = URI("#{expected_s3_bucket}#{expected_s3_folder}/#{archive_filename}")
-        expect(download_adapter).to receive(:download).with(expected_uri, "/#{archive_filename}")
+        download_adapter.should_receive(:download).with(expected_uri, "/#{archive_filename}")
         perform
 
         expect(Bosh::Stemcell::ArchiveFilename).to have_received(:new).with('123', definition, 'stemcell-name')
       end
 
       it 'returns the name of the downloaded file' do
-        expect(download_adapter).to receive(:download)
-        expect(perform).to eq(archive_filename.to_s)
+        download_adapter.should_receive(:download)
+        perform.should eq(archive_filename.to_s)
       end
     end
 
@@ -354,43 +368,42 @@ module Bosh::Dev
   end
 
   describe Build::Candidate do
-    let(:logger) { Logger.new('/dev/null') }
-    subject(:build) { Build::Candidate.new('123', bucket_name, download_adapter, logger) }
+    subject(:build) { Build::Candidate.new('123', download_adapter, logger) }
     let(:download_adapter) { instance_double('Bosh::Dev::DownloadAdapter') }
-    let(:bucket_name) { 'fake-bucket' }
 
     describe '#release_tarball_path' do
       context 'when remote file does not exist' do
         it 'raises an exception' do
           error = Exception.new('error-message')
-          allow(download_adapter).to receive(:download).and_raise(error)
+          download_adapter.stub(:download).and_raise(error)
           expect { build.release_tarball_path }.to raise_error(error)
         end
       end
 
       it 'downloads the specified release from the pipeline bucket' do
         uri = URI('http://bosh-ci-pipeline.s3.amazonaws.com/123/release/bosh-123.tgz')
-        expect(download_adapter).to receive(:download).with(uri, 'tmp/bosh-123.tgz')
+        download_adapter.should_receive(:download).with(uri, 'tmp/bosh-123.tgz')
         build.release_tarball_path
       end
 
       it 'returns the relative path of the downloaded release' do
         uri = URI('http://bosh-ci-pipeline.s3.amazonaws.com/123/release/bosh-123.tgz')
-        expect(download_adapter).to receive(:download).with(uri, 'tmp/bosh-123.tgz')
+        download_adapter.should_receive(:download).with(uri, 'tmp/bosh-123.tgz')
         expect(build.release_tarball_path).to eq('tmp/bosh-123.tgz')
       end
     end
   end
 
   describe Build::Local do
-    let(:logger) { Logger.new('/dev/null') }
-    subject { described_class.new('build-number', bucket_name, download_adapter, logger) }
+    subject { described_class.new('build-number', download_adapter, logger) }
     let(:download_adapter) { instance_double('Bosh::Dev::DownloadAdapter') }
-    let(:bucket_name) { 'fake-bucket' }
+
+    before(:all) { Fog.mock! }
+    after(:all) { Fog.unmock! }
 
     describe '#release_tarball_path' do
       let(:dev_bosh_release) { instance_double('Bosh::Dev::BoshRelease') }
-      before { allow(Bosh::Dev::BoshRelease).to receive(:build).and_return(dev_bosh_release) }
+      before { Bosh::Dev::BoshRelease.stub(build: dev_bosh_release) }
 
       let(:gem_components) { instance_double('Bosh::Dev::GemComponents') }
       before { allow(GemComponents).to receive(:new).with('build-number').and_return(gem_components) }
@@ -431,8 +444,8 @@ module Bosh::Dev
 
       context 'when downloading does not result in an error' do
         it 'uses download adapter to move stemcell to given location' do
-          expect(download_adapter)
-            .to receive(:download)
+          download_adapter
+            .should_receive(:download)
             .with("tmp/#{archive_filename}", "/output-directory/#{archive_filename}")
           filename = perform
 
@@ -444,7 +457,7 @@ module Bosh::Dev
       context 'when downloading results in an error' do
         it 'propagates raised error' do
           error = RuntimeError.new('error-message')
-          allow(download_adapter).to receive(:download).and_raise(error)
+          download_adapter.stub(:download).and_raise(error)
           expect { perform }.to raise_error(error)
         end
       end

@@ -1,7 +1,6 @@
 require 'spec_helper'
 require 'bosh/dev/release_change_promoter'
 require 'bosh/dev/download_adapter'
-require 'logger'
 
 module Bosh::Dev
   describe ReleaseChangePromoter do
@@ -13,14 +12,13 @@ module Bosh::Dev
     let(:final_release_sha) { 'final-release-sha' }
     let(:release_changes) { Bosh::Dev::ReleaseChangePromoter.new(build_number, candidate_sha, download_adapter, logger) }
     let(:download_adapter) { instance_double('Bosh::Dev::DownloadAdapter', download: nil) }
-    let(:logger) { Logger.new('/dev/null') }
 
     let(:release_patches_bucket) { Bosh::Dev::UriProvider::RELEASE_PATCHES_BUCKET }
     let(:patch_key) { "#{build_number}-final-release.patch" }
 
     before do
       allow(Open3).to receive(:capture3).
-        and_return([nil, nil, instance_double('Process::Status', success?: true)])
+        and_return(['', '', instance_double('Process::Status', success?: true)])
     end
 
     describe '#promote' do
@@ -36,7 +34,7 @@ module Bosh::Dev
       it 'applies the changes via a git commit' do
         allow(download_adapter).to receive(:download).and_return(patch_file.path)
 
-        success = [ nil, nil, instance_double('Process::Status', success?: true) ]
+        success = ['', '', instance_double('Process::Status', success?: true)]
         expect(Open3).to receive(:capture3).with("git checkout #{candidate_sha}").and_return(success).ordered
         expect(Open3).to receive(:capture3).with('git checkout .').and_return(success).ordered
         expect(Open3).to receive(:capture3).with('git clean --force').and_return(success).ordered
@@ -49,9 +47,9 @@ module Bosh::Dev
 
       it 'returns the sha after committing release changes' do
         expect(Open3).to receive(:capture3).with("git commit -m 'Adding final release for build #{build_number}'").
-          and_return([ nil, nil, instance_double('Process::Status', success?: true) ]).ordered
+          and_return(['', '', instance_double('Process::Status', success?: true)]).ordered
         expect(Open3).to receive(:capture3).with('git rev-parse HEAD').
-          and_return([ final_release_sha, nil, instance_double('Process::Status', success?: true) ]).ordered
+          and_return(["#{final_release_sha}\n", nil, instance_double('Process::Status', success?: true)]).ordered
 
         expect(release_changes.promote).to eq(final_release_sha)
       end

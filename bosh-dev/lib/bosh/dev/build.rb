@@ -1,5 +1,5 @@
 require 'peach'
-require 'logger'
+require 'mono_logger'
 require 'bosh/dev/promotable_artifacts'
 require 'bosh/dev/download_adapter'
 require 'bosh/dev/local_download_adapter'
@@ -15,11 +15,11 @@ module Bosh::Dev
   class Build
     attr_reader :number
 
-    def self.candidate(bucket_name, logger = Logger.new(STDERR))
+    def self.candidate(logger = MonoLogger.new(STDERR))
       number = ENV['CANDIDATE_BUILD_NUMBER']
       if number
         logger.info("CANDIDATE_BUILD_NUMBER is #{number}. Using candidate build.")
-        Candidate.new(number, bucket_name, DownloadAdapter.new(logger), logger)
+        Candidate.new(number, DownloadAdapter.new(logger), logger)
       else
         logger.info('CANDIDATE_BUILD_NUMBER not set. Using local build.')
 
@@ -31,15 +31,15 @@ module Bosh::Dev
           subnum = '0000'
         end
 
-        Local.new(subnum, bucket_name, LocalDownloadAdapter.new(logger), logger)
+        Local.new(subnum, LocalDownloadAdapter.new(logger), logger)
       end
     end
 
-    def initialize(number, bucket_name, download_adapter, logger)
+    def initialize(number, download_adapter, logger)
       @number = number
       @logger = logger
       @promotable_artifacts = PromotableArtifacts.new(self, logger)
-      @bucket = bucket_name
+      @bucket = 'bosh-ci-pipeline'
       @upload_adapter = UploadAdapter.new
       @download_adapter = download_adapter
     end
@@ -72,6 +72,7 @@ module Bosh::Dev
       s3_path = File.join(number.to_s, 'bosh-stemcell', stemcell.infrastructure, normal_filename)
       s3_latest_path = File.join(number.to_s, 'bosh-stemcell', stemcell.infrastructure, latest_filename)
 
+      bucket = 'bosh-ci-pipeline'
       upload_adapter = Bosh::Dev::UploadAdapter.new
 
       upload_adapter.upload(bucket_name: bucket, key: s3_latest_path, body: File.open(stemcell.path), public: true)
