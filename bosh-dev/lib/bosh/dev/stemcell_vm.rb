@@ -6,7 +6,7 @@ module Bosh::Dev
 
     def run(cmd)
       run_cmd = <<-BASH
-        set -eu
+        #set -eu
 
         pushd bosh-stemcell
         vagrant ssh -c "bash -l -c '#{cmd}'" #{vm_name}
